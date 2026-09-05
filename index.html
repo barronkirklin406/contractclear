@@ -58,6 +58,7 @@ textarea:focus{outline:none;border-color:#2563eb;background:white;}
 
 var FREE_LIMIT = 2;
 var UPGRADE_EMAIL = "contractclearapp@gmail.com";
+var PAY_URL = "https://buy.stripe.com/test_dRm3cv7In6cx91I89PaIM00";
 
 var btn = document.getElementById("analyze-btn");
 var box = document.getElementById("contract-input");
@@ -76,7 +77,24 @@ function addUsed() {
   try { localStorage.setItem("cc_used", String(getUsed() + 1)); } catch (e) {}
 }
 
+function isPaid() {
+  try { return localStorage.getItem("cc_paid") === "1"; } catch (e) { return false; }
+}
+
+function setPaid() {
+  try { localStorage.setItem("cc_paid", "1"); } catch (e) {}
+}
+
+if (window.location.search.indexOf("paid=1") > -1) {
+  setPaid();
+  try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
+}
+
 function updateQuota() {
+  if (isPaid()) {
+    quota.innerHTML = "<strong>Full access unlocked.</strong> Unlimited contracts, complete reports.";
+    return;
+  }
   var left = FREE_LIMIT - getUsed();
   if (left > 1) { quota.textContent = left + " free analyses left"; }
   else if (left === 1) { quota.textContent = "1 free analysis left"; }
@@ -90,7 +108,7 @@ btn.onclick = function() {
     alert("Please paste more contract text before analyzing.");
     return;
   }
-  var locked = getUsed() >= FREE_LIMIT;
+  var locked = !isPaid() && getUsed() >= FREE_LIMIT;
   btn.disabled = true;
   btn.textContent = "Analyzing...";
   loading.style.display = "block";
@@ -180,9 +198,8 @@ function showResults(text, locked) {
       "Watch out for &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Locked<br>" +
       "What to negotiate &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Locked" +
       "</p></div>" +
-      "<button id='upgrade-btn' style='display:block;width:100%;padding:16px;background:#1a1a1a;color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;'>Unlock the full report</button>" +
-      "<p style='font-size:13px;color:#888;text-align:center;margin-top:12px;'>$19 per month, unlimited contracts. Cancel anytime.</p>" +
-      "<p id='upgrade-note' style='display:none;font-size:14px;line-height:1.7;color:#333;background:#fef9c3;border:1px solid #fcd34d;border-radius:8px;padding:16px;margin-top:16px;'></p>" +
+      "<button id='upgrade-btn' style='display:block;width:100%;padding:16px;background:#1a1a1a;color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;'>Unlock the full report — $29</button>" +
+      "<p style='font-size:13px;color:#888;text-align:center;margin-top:12px;'>One payment. Unlimited contracts, forever. Questions: " + UPGRADE_EMAIL + "</p>" +
       "</div>";
   } else {
     body =
@@ -204,9 +221,7 @@ function showResults(text, locked) {
   var up = document.getElementById("upgrade-btn");
   if (up) {
     up.onclick = function() {
-      var note = document.getElementById("upgrade-note");
-      note.innerHTML = "Card payments go live shortly. Until then, email <a href='mailto:" + UPGRADE_EMAIL + "?subject=ContractClear%20full%20report' style='color:#b45309;font-weight:700;'>" + UPGRADE_EMAIL + "</a> and you'll get the full report on this contract sent back to you.";
-      note.style.display = "block";
+      window.location.href = PAY_URL;
     };
   }
 
