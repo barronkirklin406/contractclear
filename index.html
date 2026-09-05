@@ -24,6 +24,7 @@ textarea:focus{outline:none;border-color:#2563eb;background:white;}
 #analyze-btn{display:block;width:100%;padding:16px;background:#dc2626;color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;margin-top:20px;}
 #analyze-btn:hover{background:#b91c1c;}
 #analyze-btn:disabled{background:#f87171;cursor:not-allowed;}
+#quota-msg{font-size:13px;color:#666;text-align:center;margin-top:10px;}
 #loading-msg{display:none;text-align:center;padding:32px;color:#555;font-size:15px;}
 #result-section{display:none;margin-bottom:48px;}
 .disclaimer{font-size:12px;color:#999;text-align:center;margin-top:8px;line-height:1.5;}
@@ -47,6 +48,7 @@ textarea:focus{outline:none;border-color:#2563eb;background:white;}
 <textarea id="contract-input" placeholder="Paste the full text of your client contract, service agreement, or NDA here..."></textarea>
 <p class="hint">Paste as much as you have. The more text, the better the analysis. Your contract is never stored.</p>
 <button id="analyze-btn">Analyze This Contract</button>
+<p id="quota-msg"></p>
 <p class="disclaimer">Not legal advice. Always consult a qualified attorney for binding decisions.</p>
 </div>
 <div id="loading-msg">Reading your contract... this usually takes 10 to 20 seconds.</div>
@@ -54,22 +56,46 @@ textarea:focus{outline:none;border-color:#2563eb;background:white;}
 </main>
 <script>
 
+var FREE_LIMIT = 2;
+var UPGRADE_EMAIL = "contractclearapp@gmail.com";
+
 var btn = document.getElementById("analyze-btn");
 var box = document.getElementById("contract-input");
 var loading = document.getElementById("loading-msg");
 var results = document.getElementById("result-section");
+var quota = document.getElementById("quota-msg");
+
+function getUsed() {
+  var n = 0;
+  try { n = parseInt(localStorage.getItem("cc_used") || "0", 10); } catch (e) { n = 0; }
+  if (isNaN(n) || n < 0) n = 0;
+  return n;
+}
+
+function addUsed() {
+  try { localStorage.setItem("cc_used", String(getUsed() + 1)); } catch (e) {}
+}
+
+function updateQuota() {
+  var left = FREE_LIMIT - getUsed();
+  if (left > 1) { quota.textContent = left + " free analyses left"; }
+  else if (left === 1) { quota.textContent = "1 free analysis left"; }
+  else { quota.textContent = "Free analyses used. You'll still get the risk score and summary."; }
+}
+updateQuota();
+
 btn.onclick = function() {
   var text = box.value;
   if (text.length < 100) {
     alert("Please paste more contract text before analyzing.");
     return;
   }
+  var locked = getUsed() >= FREE_LIMIT;
   btn.disabled = true;
   btn.textContent = "Analyzing...";
   loading.style.display = "block";
   results.style.display = "none";
   results.innerHTML = "";
-  var prompt = "You are ContractClear, an expert AI that protects freelance developers and designers from predatory contracts. Analyze the following contract and identify every clause that could harm the freelancer.\n\nLook for:\n- Work-for-hire language transferring ownership to client\n- IP assignment clauses handing over codebase or design systems\n- Claims on pre-existing work the freelancer already owned\n- Portfolio restrictions\n- Overly broad non-compete clauses\n- Derivative works language\n- NDA clauses preventing freelancer from describing their own skills\n\nRespond using exactly these headers:\n\nRISK SCORE: [LOW or MEDIUM or HIGH or CRITICAL]\n\nSUMMARY:\n[2 to 3 plain English sentences]\n\nRED FLAG CLAUSES:\n[Each starting with a dash, topic, colon, explanation]\n\nWATCH OUT FOR:\n[Each starting with a dash. If none write: None.]\n\nWHAT TO NEGOTIATE:\n[3 to 5 specific changes, each starting with a dash]\n\nCONTRACT TEXT:\n" + text;
   fetch("/.netlify/functions/analyze", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -77,8 +103,10 @@ btn.onclick = function() {
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
-    var t = d.result;
-    showResults(t);
+    if (!d.result) { throw new Error("No analysis came back. Please try again."); }
+    if (!locked) { addUsed(); }
+    updateQuota();
+    showResults(d.result, locked);
   })
   .catch(function(e) {
     results.innerHTML = "<div style='background:#fee2e2;border:1px solid #fca5a5;border-radius:12px;padding:24px;color:#b91c1c;font-size:14px;'>Error: " + e.message + "</div>";
@@ -90,7 +118,8 @@ btn.onclick = function() {
     loading.style.display = "none";
   });
 };
-function showResults(text) {
+
+function showResults(text, locked) {
   var rm = text.match(/RISK SCORE:\s*(LOW|MEDIUM|HIGH|CRITICAL)/i);
   var rs = rm ? rm[1].toUpperCase() : "UNKNOWN";
   var colors = {
@@ -105,6 +134,10 @@ function showResults(text) {
     var rx = new RegExp(label + ":\\s*([\\s\\S]*?)(?=\\n[A-Z ]+:|$)", "i");
     var m = text.match(rx);
     return m ? m[1].trim() : "Not found.";
+  }
+  function countItems(raw) {
+    if (!raw || raw === "Not found." || raw.indexOf("None") === 0) return 0;
+    return raw.split("\n").filter(function(l) { return l.trim().indexOf("-") === 0; }).length;
   }
   function bullets(raw) {
     if (!raw || raw === "None." || raw === "None found.") return "<p style='color:#888;font-size:14px;'>None found.</p>";
@@ -122,24 +155,61 @@ function showResults(text) {
     }
     return h;
   }
-  results.innerHTML =
+
+  var head =
     "<div style='background:" + c.bg + ";border:2px solid " + c.border + ";border-radius:12px;padding:20px 24px;margin-bottom:20px;'>" +
     "<div style='font-size:12px;color:" + c.text + ";font-weight:700;letter-spacing:1px;text-transform:uppercase;'>IP Risk Score</div>" +
     "<div style='font-size:28px;font-weight:800;color:" + c.text + ";'>" + c.label + "</div></div>" +
     "<div style='background:white;border:1px solid #e5e5e5;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
     "<h3 style='font-size:15px;font-weight:700;margin-bottom:10px;'>Summary</h3>" +
-    "<p style='font-size:14px;line-height:1.7;color:#333;'>" + getSection("SUMMARY") + "</p></div>" +
-    "<div style='background:white;border:1px solid #fca5a5;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
-    "<h3 style='font-size:15px;font-weight:700;margin-bottom:12px;color:#dc2626;'>Red Flag Clauses</h3>" +
-    "<ul style='list-style:none;padding:0;margin:0;'>" + bullets(getSection("RED FLAG CLAUSES")) + "</ul></div>" +
-    "<div style='background:white;border:1px solid #fcd34d;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
-    "<h3 style='font-size:15px;font-weight:700;margin-bottom:12px;color:#92400e;'>Watch Out For</h3>" +
-    "<ul style='list-style:none;padding:0;margin:0;'>" + bullets(getSection("WATCH OUT FOR")) + "</ul></div>" +
-    "<div style='background:white;border:1px solid #6ee7b7;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
-    "<h3 style='font-size:15px;font-weight:700;margin-bottom:12px;color:#065f46;'>What to Negotiate</h3>" +
-    "<ul style='list-style:none;padding:0;margin:0;'>" + bullets(getSection("WHAT TO NEGOTIATE")) + "</ul></div>" +
+    "<p style='font-size:14px;line-height:1.7;color:#333;'>" + getSection("SUMMARY") + "</p></div>";
+
+  var body;
+  if (locked) {
+    var nFlags = countItems(getSection("RED FLAG CLAUSES"));
+    var nNeg = countItems(getSection("WHAT TO NEGOTIATE"));
+    var flagLine = nFlags === 1 ? "1 red flag clause" : nFlags + " red flag clauses";
+    var negLine = nNeg === 1 ? "1 change to negotiate" : nNeg + " changes to negotiate";
+    body =
+      "<div style='background:white;border:2px solid #1a1a1a;border-radius:12px;padding:28px;margin-bottom:16px;'>" +
+      "<h3 style='font-size:20px;font-weight:800;margin-bottom:10px;'>" + flagLine + " found in this contract</h3>" +
+      "<p style='font-size:14px;line-height:1.7;color:#444;margin-bottom:18px;'>The full report names each clause, explains in plain English how it takes your work, and gives you " + negLine + " with the exact wording to send back to your client.</p>" +
+      "<div style='background:#fafafa;border:1px solid #eee;border-radius:8px;padding:16px;margin-bottom:20px;'>" +
+      "<p style='font-size:13px;color:#999;line-height:2;'>" +
+      "Red flag clauses &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Locked<br>" +
+      "Watch out for &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Locked<br>" +
+      "What to negotiate &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Locked" +
+      "</p></div>" +
+      "<button id='upgrade-btn' style='display:block;width:100%;padding:16px;background:#1a1a1a;color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;'>Unlock the full report</button>" +
+      "<p style='font-size:13px;color:#888;text-align:center;margin-top:12px;'>$19 per month, unlimited contracts. Cancel anytime.</p>" +
+      "<p id='upgrade-note' style='display:none;font-size:14px;line-height:1.7;color:#333;background:#fef9c3;border:1px solid #fcd34d;border-radius:8px;padding:16px;margin-top:16px;'></p>" +
+      "</div>";
+  } else {
+    body =
+      "<div style='background:white;border:1px solid #fca5a5;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
+      "<h3 style='font-size:15px;font-weight:700;margin-bottom:12px;color:#dc2626;'>Red Flag Clauses</h3>" +
+      "<ul style='list-style:none;padding:0;margin:0;'>" + bullets(getSection("RED FLAG CLAUSES")) + "</ul></div>" +
+      "<div style='background:white;border:1px solid #fcd34d;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
+      "<h3 style='font-size:15px;font-weight:700;margin-bottom:12px;color:#92400e;'>Watch Out For</h3>" +
+      "<ul style='list-style:none;padding:0;margin:0;'>" + bullets(getSection("WATCH OUT FOR")) + "</ul></div>" +
+      "<div style='background:white;border:1px solid #6ee7b7;border-radius:12px;padding:24px;margin-bottom:16px;'>" +
+      "<h3 style='font-size:15px;font-weight:700;margin-bottom:12px;color:#065f46;'>What to Negotiate</h3>" +
+      "<ul style='list-style:none;padding:0;margin:0;'>" + bullets(getSection("WHAT TO NEGOTIATE")) + "</ul></div>";
+  }
+
+  results.innerHTML = head + body +
     "<p style='font-size:12px;color:#999;text-align:center;margin-top:8px;line-height:1.5;'>Not legal advice. Always consult a qualified attorney before signing.</p>";
   results.style.display = "block";
+
+  var up = document.getElementById("upgrade-btn");
+  if (up) {
+    up.onclick = function() {
+      var note = document.getElementById("upgrade-note");
+      note.innerHTML = "Card payments go live shortly. Until then, email <a href='mailto:" + UPGRADE_EMAIL + "?subject=ContractClear%20full%20report' style='color:#b45309;font-weight:700;'>" + UPGRADE_EMAIL + "</a> and you'll get the full report on this contract sent back to you.";
+      note.style.display = "block";
+    };
+  }
+
   results.scrollIntoView({behavior:"smooth"});
 }
 </script>
